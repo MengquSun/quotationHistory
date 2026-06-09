@@ -3,6 +3,7 @@ FROM nginx:1.27-alpine
 ENV BACKEND_URL=http://backend:8000
 
 COPY deploy/frontend.nginx.conf /etc/nginx/templates/default.conf.template
-COPY static /usr/share/nginx/html
+COPY static/index.html /usr/share/nginx/html/index.html
+COPY static /usr/share/nginx/html/static
 
 EXPOSE 80
