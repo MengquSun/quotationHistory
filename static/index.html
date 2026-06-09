@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quotation History</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>报价历史系统</h1>
+        <p>采购记录、物料标准化、报价成本计算</p>
+      </div>
+      <div class="auth-strip">
+        <form id="loginForm">
+          <input name="email" type="email" placeholder="email" />
+          <input name="password" type="password" placeholder="password" />
+          <button type="submit">登录</button>
+        </form>
+        <label class="role-toggle">
+          <span>管理员</span>
+          <input id="adminRole" type="checkbox" checked />
+        </label>
+      </div>
+    </header>
+
+    <main>
+      <nav class="tabs" aria-label="views">
+        <button class="active" data-tab="import">导入</button>
+        <button data-tab="quotations">报价历史</button>
+        <button data-tab="dashboard">看板</button>
+        <button data-tab="manual">录入</button>
+        <button data-tab="search">查询</button>
+        <button data-tab="quote">报价</button>
+      </nav>
+
+      <section id="import" class="panel active">
+        <div class="grid two">
+          <form id="previewForm" class="surface">
+            <h2>Excel / CSV 导入</h2>
+            <label class="drop-zone" id="dropZone">文件<input name="file" type="file" accept=".xlsx,.csv" required /><span>拖拽或选择 Excel / CSV</span></label>
+            <label>数据类型
+              <select id="importType">
+                <option value="inquiry">询价记录</option>
+                <option value="purchase">实际采购</option>
+              </select>
+            </label>
+            <button type="submit">生成预览</button>
+          </form>
+          <div class="surface">
+            <h2>字段映射</h2>
+            <div id="mappingList" class="mapping"></div>
+            <button id="confirmImport" disabled>确认入库</button>
+          </div>
+        </div>
+        <div class="surface wide">
+          <h2>预览</h2>
+          <div id="previewRows" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="quotations" class="panel">
+        <div class="surface">
+          <h2>报价文件</h2>
+          <div class="inline">
+            <button id="reloadQuotations">刷新</button>
+            <input id="catalogSearch" placeholder="Catalog No / 货号" />
+            <button id="historyButton">历史</button>
+          </div>
+          <div id="quotationList" class="table-wrap"></div>
+          <div id="historyChart" class="chart"></div>
+          <div id="historyRows" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="dashboard" class="panel">
+        <div class="surface">
+          <h2>数据看板</h2>
+          <button id="reloadDashboard">刷新</button>
+          <div id="dashboardContent" class="dashboard-grid"></div>
+        </div>
+      </section>
+
+      <section id="manual" class="panel">
+        <form id="manualForm" class="surface form-grid">
+          <h2>手动录入</h2>
+          <label>物料名称<input name="material_name" required placeholder="乙醇 / ethanol / 64-17-5" /></label>
+          <label>价格<input name="price" type="number" step="0.0001" required /></label>
+          <label>数量<input name="quantity" placeholder="500g / 1 kg / 2瓶" /></label>
+          <label>单位<input name="unit" placeholder="g / kg / 瓶" /></label>
+          <label>类型<select name="record_type"><option value="inquiry">询价</option><option value="purchase">采购</option></select></label>
+          <label>币种<input name="currency" value="CNY" /></label>
+          <label>日期<input name="record_date" type="date" /></label>
+          <label>供应商<input name="supplier" /></label>
+          <label>询价/采购人<input name="requester" /></label>
+          <label class="span">备注<textarea name="remark"></textarea></label>
+          <button type="submit">保存</button>
+        </form>
+      </section>
+
+      <section id="search" class="panel">
+        <div class="surface">
+          <h2>物料查询</h2>
+          <div class="inline">
+            <input id="searchInput" placeholder="CAS、中文名、英文名、俗名" />
+            <button id="searchButton">查询</button>
+            <a class="button ghost" href="/api/records/export.csv">导出 CSV</a>
+          </div>
+          <div id="searchResults" class="results"></div>
+          <div id="recordDetails" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="quote" class="panel">
+        <form id="quoteForm" class="surface form-grid">
+          <h2>报价成本计算</h2>
+          <label>物料<input name="material_query" required placeholder="ethanol" /></label>
+          <label>需求数量<input name="required_quantity" required placeholder="500g" /></label>
+          <label>需求单位<input name="required_unit" placeholder="g" /></label>
+          <button type="submit">计算</button>
+        </form>
+        <div id="quoteResult" class="surface"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

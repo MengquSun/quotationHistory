@@ -1,0 +1,19 @@
+[build]
+  publish = "static"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://quotationhist-backend.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://quotationhist-backend.onrender.com/health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
