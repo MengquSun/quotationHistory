@@ -2,6 +2,7 @@ services:
   - type: web
     name: quotationhist-backend
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile
     envVars:
       - key: APP_ENV
@@ -26,6 +27,7 @@ services:
   - type: web
     name: quotationhist-frontend
     runtime: docker
+    plan: free
     dockerfilePath: ./Dockerfile.frontend
     envVars:
       - key: APP_ENV
