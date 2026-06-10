@@ -80,7 +80,7 @@ def list_quotations() -> list[dict[str, Any]]:
             left join line_items li on li.quotation_id = q.id
             where q.archived_at is null
             group by q.id
-            order by coalesce(q.quoted_on, q.imported_at) desc, q.id desc
+            order by coalesce(q.quoted_on, cast(q.imported_at as text)) desc, q.id desc
             """
         ).fetchall()
     return db.rows_to_dicts(rows)
@@ -118,7 +118,7 @@ def get_catalog_history(catalog_no: str) -> list[dict[str, Any]]:
             from line_items li
             join quotations q on q.id = li.quotation_id
             where lower(li.catalog_no) = lower(?) and q.archived_at is null
-            order by coalesce(q.quoted_on, q.imported_at) asc, q.id asc, li.id asc
+            order by coalesce(q.quoted_on, cast(q.imported_at as text)) asc, q.id asc, li.id asc
             """,
             (catalog_no,),
         ).fetchall()
@@ -226,7 +226,7 @@ def quotation_dashboard() -> dict[str, Any]:
             from procurement_records r
             left join materials m on m.id = r.material_id
             where r.archived_at is null
-            order by coalesce(r.record_date, r.created_at) desc, r.id desc
+            order by coalesce(r.record_date, cast(r.created_at as text)) desc, r.id desc
             limit 8
             """
         ).fetchall()

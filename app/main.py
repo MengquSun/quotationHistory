@@ -407,7 +407,7 @@ def material_records(material_id: int) -> dict:
     with db.connect() as conn:
         material = db.row_to_dict(conn.execute("select * from materials where id = ?", (material_id,)).fetchone())
         rows = db.rows_to_dicts(
-            conn.execute("select * from procurement_records where material_id = ? and archived_at is null order by coalesce(record_date, created_at) desc", (material_id,)).fetchall()
+            conn.execute("select * from procurement_records where material_id = ? and archived_at is null order by coalesce(record_date, cast(created_at as text)) desc", (material_id,)).fetchall()
         )
     if not material:
         raise HTTPException(status_code=404, detail="Material not found.")
@@ -543,7 +543,7 @@ def export_records() -> StreamingResponse:
                        r.requester, r.remark
                 from procurement_records r
                 left join materials m on m.id = r.material_id
-                order by coalesce(r.record_date, r.created_at) desc
+                order by coalesce(r.record_date, cast(r.created_at as text)) desc
                 """
             ).fetchall()
         )
