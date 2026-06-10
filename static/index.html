@@ -18,7 +18,11 @@
           <input name="password" type="password" placeholder="password" />
           <button type="submit">登录</button>
         </form>
-        <span id="authStatus" class="auth-status">未登录</span>
+        <button id="registerButton" type="button" class="ghost auth-action">注册账号</button>
+        <div id="userMenu" class="user-menu" hidden>
+          <span id="authStatus" class="auth-status">未登录</span>
+          <button id="logoutButton" type="button" class="ghost auth-action">退出登录</button>
+        </div>
       </div>
     </header>
 

@@ -22,6 +22,10 @@ function asJson(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
 async function readError(response) {
   try {
     const data = await response.json();
@@ -33,13 +37,22 @@ async function readError(response) {
 
 function updateAuthStatus(user) {
   const node = document.querySelector("#authStatus");
+  const loginForm = document.querySelector("#loginForm");
+  const registerButton = document.querySelector("#registerButton");
+  const userMenu = document.querySelector("#userMenu");
   if (!node) return;
   if (user) {
-    node.textContent = `${user.name || user.email} · ${user.role}`;
+    node.textContent = `${user.name || user.email} 已登录`;
     node.classList.add("ok-status");
+    loginForm.hidden = true;
+    registerButton.hidden = true;
+    userMenu.hidden = false;
   } else {
     node.textContent = "未登录";
     node.classList.remove("ok-status");
+    loginForm.hidden = false;
+    registerButton.hidden = false;
+    userMenu.hidden = true;
   }
 }
 
@@ -90,6 +103,18 @@ document.querySelector("#loginForm").addEventListener("submit", async (event) =>
   localStorage.setItem("quotationhist_token", data.token);
   updateAuthStatus(data.user);
   toast(`已登录：${data.user.email}`);
+});
+
+document.querySelector("#logoutButton").addEventListener("click", () => {
+  state.token = "";
+  state.user = null;
+  localStorage.removeItem("quotationhist_token");
+  updateAuthStatus(null);
+  toast("已退出登录");
+});
+
+document.querySelector("#registerButton").addEventListener("click", () => {
+  toast("注册入口已预留，请联系管理员开通账号。");
 });
 
 const dropZone = document.querySelector("#dropZone");
@@ -242,14 +267,19 @@ async function loadDashboard() {
   const data = await response.json();
   document.querySelector("#dashboardContent").innerHTML = `
     <div class="metric"><strong>${data.quotation_count}</strong><span>报价文件</span></div>
+    <div class="metric"><strong>${data.record_count || 0}</strong><span>采购/询价记录</span></div>
     <div><h3>高频产品</h3>${miniTable(data.most_quoted_products, ["catalog_no", "quote_count", "avg_unit_price"])}</div>
+    <div><h3>高频物料</h3>${miniTable(data.most_recorded_materials || [], ["standard_name", "record_count", "avg_unit_price"])}</div>
     <div><h3>客户统计</h3>${miniTable(data.customer_summary, ["customer", "quotation_count"])}</div>
-    <div><h3>最近导入</h3>${miniTable(data.recent_quotations, ["filename", "customer", "line_item_count"])}</div>`;
+    <div><h3>供应商统计</h3>${miniTable(data.supplier_summary || [], ["supplier", "record_count"])}</div>
+    <div><h3>最近报价文件</h3>${miniTable(data.recent_quotations, ["filename", "customer", "line_item_count"])}</div>
+    <div><h3>最近采购/询价</h3>${miniTable(data.recent_records || [], ["standard_name", "record_type", "price", "record_date"])}</div>
+    <div><h3>数据依据</h3><p class="muted-note">报价文件来自“报价历史”Excel 导入；采购/询价记录来自“导入”和“录入”。没有对应数据时显示暂无数据。</p></div>`;
 }
 
 function miniTable(rows, columns) {
   if (!rows.length) return "<p>暂无数据</p>";
-  return `<table><tbody>${rows.map((row) => `<tr>${columns.map((column) => `<td>${row[column] || ""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  return `<table><tbody>${rows.map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
 document.querySelector("#reloadQuotations").addEventListener("click", loadQuotations);
@@ -319,11 +349,25 @@ document.querySelector("#quoteForm").addEventListener("submit", async (event) =>
     toast("请至少填写一个报价物品。");
     return;
   }
-  const response = await fetch("/api/quotations/calculate-batch", {
+  let response = await fetch("/api/quotations/calculate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items }),
   });
+  if (response.status === 404) {
+    const fallbackItems = await Promise.all(
+      items.map(async (input) => {
+        const itemResponse = await fetch("/api/quotations/calculate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        if (!itemResponse.ok) return { input, material: null, source_record: null, result: { estimated_cost: null, warning: await readError(itemResponse) } };
+        return { input, ...(await itemResponse.json()) };
+      }),
+    );
+    response = { ok: true, json: async () => ({ items: fallbackItems }) };
+  }
   if (!response.ok) {
     toast(await readError(response));
     return;
@@ -332,9 +376,11 @@ document.querySelector("#quoteForm").addEventListener("submit", async (event) =>
   document.querySelector("#quoteResult").innerHTML = `<h2>计算结果</h2><div class="table-wrap"><table><thead><tr><th>物料</th><th>需求</th><th>成本</th><th>来源记录</th><th>提示</th></tr></thead><tbody>${data.items
     .map(
       (item) =>
-        `<tr><td>${item.material ? item.material.standard_name : item.input.material_query}</td><td>${item.input.required_quantity} ${item.input.required_unit || ""}</td><td>${
-          item.result.estimated_cost || "-"
-        }</td><td>${item.result.price_source_record_id || "-"}</td><td>${item.result.warning || ""}</td></tr>`,
+        `<tr><td>${escapeHtml(item.material ? item.material.standard_name : item.input.material_query)}</td><td>${escapeHtml(item.input.required_quantity)} ${escapeHtml(
+          item.input.required_unit || "",
+        )}</td><td>${escapeHtml(item.result.estimated_cost || "-")}</td><td>${escapeHtml(item.result.price_source_record_id || "-")}</td><td>${escapeHtml(
+          item.result.warning || "",
+        )}</td></tr>`,
     )
     .join("")}</tbody></table></div>`;
 });

@@ -166,6 +166,7 @@ def quotation_dashboard() -> dict[str, Any]:
     db.init_db()
     with db.connect() as conn:
         total = conn.execute("select count(*) as value from quotations where archived_at is null").fetchone()
+        record_total = conn.execute("select count(*) as value from procurement_records where archived_at is null").fetchone()
         recent = conn.execute(
             """
             select q.*, count(li.id) as line_item_count
@@ -198,9 +199,44 @@ def quotation_dashboard() -> dict[str, Any]:
             limit 10
             """
         ).fetchall()
+        recorded_materials = conn.execute(
+            """
+            select m.standard_name, count(*) as record_count, avg(r.unit_price) as avg_unit_price
+            from procurement_records r
+            left join materials m on m.id = r.material_id
+            where r.archived_at is null
+            group by m.id, m.standard_name
+            order by record_count desc, m.standard_name asc
+            limit 10
+            """
+        ).fetchall()
+        suppliers = conn.execute(
+            """
+            select coalesce(supplier, 'Unknown') as supplier, count(*) as record_count
+            from procurement_records
+            where archived_at is null
+            group by coalesce(supplier, 'Unknown')
+            order by record_count desc
+            limit 10
+            """
+        ).fetchall()
+        recent_records = conn.execute(
+            """
+            select m.standard_name, r.record_type, r.price, r.currency, r.record_date, r.requester, r.supplier
+            from procurement_records r
+            left join materials m on m.id = r.material_id
+            where r.archived_at is null
+            order by coalesce(r.record_date, r.created_at) desc, r.id desc
+            limit 8
+            """
+        ).fetchall()
     return {
         "quotation_count": (db.row_to_dict(total) or {}).get("value", 0),
+        "record_count": (db.row_to_dict(record_total) or {}).get("value", 0),
         "recent_quotations": db.rows_to_dicts(recent),
         "most_quoted_products": db.rows_to_dicts(products),
         "customer_summary": db.rows_to_dicts(customers),
+        "most_recorded_materials": db.rows_to_dicts(recorded_materials),
+        "supplier_summary": db.rows_to_dicts(suppliers),
+        "recent_records": db.rows_to_dicts(recent_records),
     }

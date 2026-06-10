@@ -199,3 +199,10 @@ def test_admin_import_confirm_records_current_user_and_batch_quote(tmp_path, mon
     items = quote.json()["items"]
     assert items[0]["result"]["estimated_cost"] == "12.50"
     assert items[1]["result"]["warning"] == "未找到匹配物料。"
+
+    dashboard = client.get("/api/analytics/dashboard")
+    assert dashboard.status_code == 200
+    data = dashboard.json()
+    assert data["record_count"] == 1
+    assert data["most_recorded_materials"][0]["standard_name"] == "Ethanol"
+    assert data["supplier_summary"][0]["supplier"] == "Acme"

@@ -161,6 +161,18 @@ python -m pytest -q
    - Refresh the Quotation History tab, search a catalog number from an imported quotation workbook, and export XLSX.
    - Use the Search tab CSV export to download all procurement records.
 
+## Quotation History tab acceptance steps
+
+The Quotation History tab is based on quotation workbook imports, not manual procurement records.
+
+1. Log in as `admin@example.com`.
+2. Prepare or use an Excel quotation workbook with columns like `catalogNo`, `Product Name`, `Unit Price`, `Qty`, and `Unit`.
+3. Import the workbook through `POST /api/quotations/import` or the quotation-import workflow if exposed in the UI.
+4. Open the **报价历史** tab and click **刷新**.
+5. Confirm the imported quotation file appears in the table with filename, date/currency, line count, and archive action.
+6. Enter a catalog number from the workbook, for example `ACS6001-10`, and click **历史**.
+7. Confirm the price bars and history table appear, then click the `xlsx` export link.
+
 ## Sample acceptance data
 
 The CSV fixture at `data/samples/acceptance_procurement.csv` covers Chinese field mapping, CAS lookup, repeated materials, mixed units, suppliers, requesters, and dates. It is intended for manual acceptance testing of the generic procurement/import workflow.

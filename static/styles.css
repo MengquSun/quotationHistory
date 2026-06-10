@@ -323,6 +323,21 @@ textarea {
   background: #c7902e;
 }
 
+.auth-strip [hidden] {
+  display: none !important;
+}
+
+.auth-action {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .auth-status {
   min-height: 36px;
   display: inline-flex;
@@ -612,6 +627,12 @@ a {
   font-weight: 750;
 }
 
+.muted-note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 @media (max-width: 900px) {
   .topbar {
     align-items: flex-start;
@@ -669,6 +690,12 @@ a {
   }
 
   .auth-strip form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-menu {
+    width: 100%;
     flex-direction: column;
     align-items: stretch;
   }
