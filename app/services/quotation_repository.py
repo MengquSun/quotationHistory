@@ -180,7 +180,7 @@ def quotation_dashboard() -> dict[str, Any]:
         ).fetchall()
         products = conn.execute(
             """
-            select catalog_no, product_name, count(*) as quote_count, avg(unit_price) as avg_unit_price
+            select min(catalog_no) as catalog_no, max(product_name) as product_name, count(*) as quote_count, avg(unit_price) as avg_unit_price
             from line_items li
             join quotations q on q.id = li.quotation_id
             where q.archived_at is null
