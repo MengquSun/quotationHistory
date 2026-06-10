@@ -1,13 +1,14 @@
 const state = {
   preview: null,
   token: localStorage.getItem("quotationhist_token") || "",
+  user: null,
 };
 
 const fields = ["material_name", "price", "quantity", "unit", "currency", "remark", "record_date", "requester", "supplier", "cas_number"];
 
-function roleHeaders() {
+function authHeaders() {
   if (state.token) return { Authorization: `Bearer ${state.token}` };
-  return document.querySelector("#adminRole").checked ? { "X-User-Role": "admin" } : {};
+  return {};
 }
 
 function toast(message) {
@@ -21,12 +22,53 @@ function asJson(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+async function readError(response) {
+  try {
+    const data = await response.json();
+    return data.detail || JSON.stringify(data);
+  } catch (error) {
+    return response.text();
+  }
+}
+
+function updateAuthStatus(user) {
+  const node = document.querySelector("#authStatus");
+  if (!node) return;
+  if (user) {
+    node.textContent = `${user.name || user.email} · ${user.role}`;
+    node.classList.add("ok-status");
+  } else {
+    node.textContent = "未登录";
+    node.classList.remove("ok-status");
+  }
+}
+
+async function loadCurrentUser() {
+  if (!state.token) {
+    updateAuthStatus(null);
+    return;
+  }
+  const response = await fetch("/api/auth/me", { headers: authHeaders() });
+  if (!response.ok) {
+    state.token = "";
+    state.user = null;
+    localStorage.removeItem("quotationhist_token");
+    updateAuthStatus(null);
+    return;
+  }
+  const data = await response.json();
+  state.user = data.user;
+  updateAuthStatus(data.user);
+}
+
 document.querySelectorAll(".tabs button").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".tabs button").forEach((item) => item.classList.remove("active"));
     document.querySelectorAll(".panel").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     document.querySelector(`#${button.dataset.tab}`).classList.add("active");
+    if (button.dataset.tab === "quotations") loadQuotations();
+    if (button.dataset.tab === "dashboard") loadDashboard();
   });
 });
 
@@ -39,12 +81,14 @@ document.querySelector("#loginForm").addEventListener("submit", async (event) =>
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    toast("登录失败，可继续使用管理员开关进行本地开发");
+    toast("登录失败");
     return;
   }
   const data = await response.json();
   state.token = data.token;
+  state.user = data.user;
   localStorage.setItem("quotationhist_token", data.token);
+  updateAuthStatus(data.user);
   toast(`已登录：${data.user.email}`);
 });
 
@@ -64,9 +108,9 @@ dropZone.addEventListener("drop", (event) => {
 document.querySelector("#previewForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
-  const response = await fetch("/api/import/preview", { method: "POST", headers: roleHeaders(), body: formData });
+  const response = await fetch("/api/import/preview", { method: "POST", headers: authHeaders(), body: formData });
   if (!response.ok) {
-    toast(await response.text());
+    toast(await readError(response));
     return;
   }
   state.preview = await response.json();
@@ -123,22 +167,27 @@ document.querySelector("#confirmImport").addEventListener("click", async () => {
     import_type: document.querySelector("#importType").value,
     rows: state.preview.preview_rows,
     mapping,
-    uploaded_by: "admin",
     stored_file_id: state.preview.stored_file_id,
   };
   const response = await fetch("/api/import/confirm", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...roleHeaders() },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
-  toast(response.ok ? "导入完成" : await response.text());
+  toast(response.ok ? "导入完成" : await readError(response));
   if (response.ok) loadQuotations();
 });
 
 async function loadQuotations() {
   const response = await fetch("/api/quotations");
+  if (!response.ok) {
+    toast(await readError(response));
+    return;
+  }
   const data = await response.json();
   const container = document.querySelector("#quotationList");
+  document.querySelector("#historyChart").innerHTML = "";
+  document.querySelector("#historyRows").innerHTML = "";
   if (!data.quotations.length) {
     container.textContent = "暂无报价导入记录。";
     return;
@@ -155,8 +204,8 @@ async function loadQuotations() {
 }
 
 async function archiveQuotation(id) {
-  const response = await fetch(`/api/quotations/${id}`, { method: "DELETE", headers: roleHeaders() });
-  toast(response.ok ? "已归档" : await response.text());
+  const response = await fetch(`/api/quotations/${id}`, { method: "DELETE", headers: authHeaders() });
+  toast(response.ok ? "已归档" : await readError(response));
   if (response.ok) loadQuotations();
 }
 
@@ -165,7 +214,7 @@ async function loadHistory() {
   if (!catalogNo) return;
   const response = await fetch(`/api/history/${encodeURIComponent(catalogNo)}`);
   if (!response.ok) {
-    toast(await response.text());
+    toast(await readError(response));
     return;
   }
   const data = await response.json();
@@ -186,6 +235,10 @@ async function loadHistory() {
 
 async function loadDashboard() {
   const response = await fetch("/api/analytics/dashboard");
+  if (!response.ok) {
+    toast(await readError(response));
+    return;
+  }
   const data = await response.json();
   document.querySelector("#dashboardContent").innerHTML = `
     <div class="metric"><strong>${data.quotation_count}</strong><span>报价文件</span></div>
@@ -208,22 +261,34 @@ document.querySelector("#manualForm").addEventListener("submit", async (event) =
   const payload = asJson(event.currentTarget);
   const response = await fetch("/api/records", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...roleHeaders() },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
-  toast(response.ok ? "已保存" : await response.text());
+  toast(response.ok ? "已保存" : await readError(response));
   if (response.ok) event.currentTarget.reset();
 });
 
-document.querySelector("#searchButton").addEventListener("click", async () => {
+async function runSearch() {
   const query = encodeURIComponent(document.querySelector("#searchInput").value);
   const response = await fetch(`/api/materials/search?q=${query}`);
+  if (!response.ok) {
+    toast(await readError(response));
+    return;
+  }
   const data = await response.json();
   const container = document.querySelector("#searchResults");
   container.innerHTML = data.materials
     .map((material) => `<div class="result-item" data-id="${material.id}"><strong>${material.standard_name}</strong><span>${material.cas_number || ""} ${material.chinese_name || ""}</span></div>`)
     .join("");
   container.querySelectorAll(".result-item").forEach((item) => item.addEventListener("click", () => loadMaterialRecords(item.dataset.id)));
+}
+
+document.querySelector("#searchButton").addEventListener("click", runSearch);
+document.querySelector("#searchInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    runSearch();
+  }
 });
 
 async function loadMaterialRecords(id) {
@@ -243,14 +308,56 @@ async function loadMaterialRecords(id) {
 
 document.querySelector("#quoteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const payload = asJson(event.currentTarget);
-  const response = await fetch("/api/quotations/calculate", {
+  const items = [...document.querySelectorAll(".quote-row")]
+    .map((row) => ({
+      material_query: row.querySelector("[name=material_query]").value.trim(),
+      required_quantity: row.querySelector("[name=required_quantity]").value.trim(),
+      required_unit: row.querySelector("[name=required_unit]").value.trim(),
+    }))
+    .filter((item) => item.material_query && item.required_quantity);
+  if (!items.length) {
+    toast("请至少填写一个报价物品。");
+    return;
+  }
+  const response = await fetch("/api/quotations/calculate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ items }),
   });
+  if (!response.ok) {
+    toast(await readError(response));
+    return;
+  }
   const data = await response.json();
-  document.querySelector("#quoteResult").innerHTML = `<h2>计算结果</h2><p>物料：${data.material ? data.material.standard_name : "-"}</p><p>成本：${
-    data.result.estimated_cost || "-"
-  }</p><p>单价来源记录：${data.result.price_source_record_id || "-"}</p><p>${data.result.warning || ""}</p>`;
+  document.querySelector("#quoteResult").innerHTML = `<h2>计算结果</h2><div class="table-wrap"><table><thead><tr><th>物料</th><th>需求</th><th>成本</th><th>来源记录</th><th>提示</th></tr></thead><tbody>${data.items
+    .map(
+      (item) =>
+        `<tr><td>${item.material ? item.material.standard_name : item.input.material_query}</td><td>${item.input.required_quantity} ${item.input.required_unit || ""}</td><td>${
+          item.result.estimated_cost || "-"
+        }</td><td>${item.result.price_source_record_id || "-"}</td><td>${item.result.warning || ""}</td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
 });
+
+function addQuoteRow(values = {}) {
+  const container = document.querySelector("#quoteItems");
+  const row = document.createElement("div");
+  row.className = "quote-row";
+  row.innerHTML = `
+    <label>物料<input name="material_query" required placeholder="ethanol" value="${values.material_query || ""}" /></label>
+    <label>需求数量<input name="required_quantity" required placeholder="500g" value="${values.required_quantity || ""}" /></label>
+    <label>需求单位<input name="required_unit" placeholder="g" value="${values.required_unit || ""}" /></label>
+    <button type="button" class="small danger" data-remove-quote>删除</button>`;
+  container.appendChild(row);
+  row.querySelector("[data-remove-quote]").addEventListener("click", () => {
+    if (document.querySelectorAll(".quote-row").length <= 1) {
+      toast("至少保留一个报价物品。");
+      return;
+    }
+    row.remove();
+  });
+}
+
+document.querySelector("#addQuoteItem").addEventListener("click", () => addQuoteRow());
+addQuoteRow();
+loadCurrentUser();

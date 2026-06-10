@@ -86,7 +86,12 @@ If your Render backend URL differs, update the two redirect targets in `netlify.
 
 ## Auth
 
-The first user registered through `POST /api/auth/register` becomes `admin`. Later registrations require an admin token. Existing local-development calls with `X-User-Role: admin` still work so older tests and workflows remain usable.
+The app creates two default users when the database is initialized:
+
+- Admin: `admin@example.com` / `Admin@123456`
+- User: `user@example.com` / `User@123456`
+
+Change these passwords before production use. Write actions use real login tokens; the old `X-User-Role` development shortcut is no longer accepted.
 
 ## Useful APIs
 
@@ -102,6 +107,7 @@ The first user registered through `POST /api/auth/register` becomes `admin`. Lat
 - `GET /api/history/{catalog_no}/export.xlsx`
 - `POST /api/import/preview`
 - `POST /api/import/confirm`
+- `POST /api/quotations/calculate-batch`
 - `POST /api/pdf/import`
 - `GET /api/analytics/dashboard`
 - `POST /api/fx-rates`
@@ -115,6 +121,55 @@ python -m pytest -q
 ```
 
 The current app still supports isolated temporary SQLite databases in tests. PostgreSQL deployment uses the same repository layer through `DATABASE_URL`.
+
+## Current acceptance checklist
+
+Use this checklist to verify the current MVP stage: local startup, import preview, confirmed storage, search, dashboard, quote calculation, and export.
+
+1. Create and activate a local environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+2. Start the backend:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+3. Open http://127.0.0.1:8000 and verify `GET /api/health` returns `status: ok`.
+4. Run the automated tests from the activated virtual environment:
+
+```bash
+python -m pytest -q
+```
+
+5. Upload `data/samples/acceptance_procurement.csv` from the Import tab and confirm:
+   - Chinese headers are mapped automatically.
+   - Preview rows show normalized quantity, unit price, and match status.
+   - Confirm import completes successfully for both inquiry and purchase flows.
+   - Uploading the same file again shows the duplicate-file notice.
+
+6. Validate user-facing flows:
+   - Search for `乙醇` or `64-17-5` and open the material records.
+   - Calculate a quote for `乙醇` with `500g`; the app should return an estimated cost.
+   - Refresh the Dashboard tab and verify summary cards/tables update.
+   - Refresh the Quotation History tab, search a catalog number from an imported quotation workbook, and export XLSX.
+   - Use the Search tab CSV export to download all procurement records.
+
+## Sample acceptance data
+
+The CSV fixture at `data/samples/acceptance_procurement.csv` covers Chinese field mapping, CAS lookup, repeated materials, mixed units, suppliers, requesters, and dates. It is intended for manual acceptance testing of the generic procurement/import workflow.
+
+## Next recommended features
+
+- Add row-level review before import confirmation: select rows, edit normalized fields, and skip invalid rows before commit.
+- Improve material details with a price trend chart, supplier comparison, and clear latest purchase/latest inquiry markers.
+- Add multi-item quote-sheet generation with CSV/XLSX export.
 
 ## Migration
 

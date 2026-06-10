@@ -323,6 +323,24 @@ textarea {
   background: #c7902e;
 }
 
+.auth-status {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: #cfdae3;
+  font-size: 13px;
+  font-weight: 750;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.auth-status.ok-status {
+  color: white;
+  border-color: rgba(213, 159, 58, 0.55);
+}
+
 .role-toggle input {
   width: 22px;
   min-height: 22px;
@@ -542,6 +560,31 @@ a {
   border: 0;
 }
 
+.quote-items {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.quote-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(150px, 0.8fr) minmax(120px, 0.6fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.quote-row label {
+  margin-bottom: 0;
+}
+
+.actions {
+  justify-content: flex-start;
+}
+
 .metric {
   display: grid;
   align-content: center;
@@ -632,5 +675,13 @@ a {
 
   .map-row {
     grid-template-columns: 1fr;
+  }
+
+  .quote-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quote-row button {
+    width: 100%;
   }
 }

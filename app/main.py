@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,7 @@ from app.services.quotation_repository import (
 )
 from app.services.quote_engine import choose_price_source, estimate_cost
 from app.storage import get_storage
-from app.services.units import calculate_unit_price, parse_decimal, parse_quantity
+from app.services.units import calculate_unit_price, parse_decimal, parse_quantity, quantize_money
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -76,6 +77,10 @@ class QuoteRequest(BaseModel):
     required_unit: str | None = None
 
 
+class QuoteBatchRequest(BaseModel):
+    items: list[QuoteRequest] = Field(min_length=1)
+
+
 class RegisterRequest(BaseModel):
     email: str
     password: str = Field(min_length=8)
@@ -102,6 +107,12 @@ def require_admin(authorization: str | None, role: str | None) -> dict | None:
     user = get_request_user(authorization, role)
     auth.require_role(user, "admin")
     return user
+
+
+def require_login(authorization: str | None, role: str | None) -> dict:
+    user = get_request_user(authorization, role)
+    auth.require_authenticated(user)
+    return user or {}
 
 
 def decimal_to_str(value: Decimal | None) -> str | None:
@@ -258,7 +269,8 @@ async def import_preview(file: UploadFile = File(...), authorization: str | None
 
 @app.post("/api/import/confirm")
 async def import_confirm(payload: ConfirmImport, authorization: str | None = Header(default=None), x_user_role: str | None = Header(default=None)) -> dict:
-    require_admin(authorization, x_user_role)
+    user = require_admin(authorization, x_user_role)
+    uploaded_by = str(user.get("email") or user.get("name") or user.get("id"))
     db.init_db()
     success = 0
     failed = 0
@@ -275,7 +287,7 @@ async def import_confirm(payload: ConfirmImport, authorization: str | None = Hea
             insert into import_files (filename, uploaded_by, import_type, status, total_rows, stored_file_id, file_sha256, is_duplicate)
             values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (payload.filename, payload.uploaded_by, payload.import_type, "confirmed", len(payload.rows), payload.stored_file_id, stored["sha256"] if stored else None, duplicate),
+            (payload.filename, uploaded_by, payload.import_type, "confirmed", len(payload.rows), payload.stored_file_id, stored["sha256"] if stored else None, duplicate),
         )
         file_id = int(cur.lastrowid)
 
@@ -286,13 +298,13 @@ async def import_confirm(payload: ConfirmImport, authorization: str | None = Hea
                 values (?, ?, ?, current_timestamp)
                 on conflict(excel_header) do update set system_field = excluded.system_field, updated_at = current_timestamp
                 """,
-                (header, field, payload.uploaded_by),
+                (header, field, uploaded_by),
             )
 
     for item in payload.rows:
         normalized = item.get("normalized", item)
         try:
-            await create_record_from_normalized(normalized, payload.import_type, payload.uploaded_by, file_id)
+            await create_record_from_normalized(normalized, payload.import_type, uploaded_by, file_id)
             success += 1
         except Exception:
             failed += 1
@@ -305,20 +317,21 @@ async def import_confirm(payload: ConfirmImport, authorization: str | None = Hea
 
 @app.post("/api/records")
 async def create_record(record: ManualRecord, authorization: str | None = Header(default=None), x_user_role: str | None = Header(default=None)) -> dict:
-    require_admin(authorization, x_user_role)
+    user = require_login(authorization, x_user_role)
+    requester = str(user.get("name") or user.get("email") or user.get("id"))
     normalized = {
         "material_name": record.material_name,
         "price": str(record.price),
         "currency": record.currency,
         "quantity": record.quantity,
         "unit": record.unit,
-        "record_date": record.record_date,
-        "requester": record.requester,
+        "record_date": date.today().isoformat(),
+        "requester": requester,
         "supplier": record.supplier,
         "remark": record.remark,
         "cas_number": record.cas_number,
     }
-    record_id = await create_record_from_normalized(normalized, record.record_type, None, None)
+    record_id = await create_record_from_normalized(normalized, record.record_type, str(user.get("id")), None)
     return {"id": record_id}
 
 
@@ -331,8 +344,8 @@ async def create_record_from_normalized(normalized: dict[str, Any], record_type:
     candidate = candidate_obj.__dict__ if candidate_obj else {"standard_name": raw_name, "synonyms": [raw_name], "match_status": "unresolved"}
     material_id = db.find_or_create_material(candidate, raw_name)
     quantity = parse_quantity(normalized.get("quantity") or normalized.get("quantity_value"), normalized.get("unit") or normalized.get("quantity_unit"))
-    price = parse_decimal(normalized.get("price"))
-    unit_price = parse_decimal(normalized.get("unit_price")) or calculate_unit_price(price, quantity)
+    price = quantize_money(parse_decimal(normalized.get("price")))
+    unit_price = quantize_money(parse_decimal(normalized.get("unit_price"))) or calculate_unit_price(price, quantity)
 
     with db.connect() as conn:
         cur = conn.execute(
@@ -414,17 +427,16 @@ def summarize_records(records: list[dict]) -> dict:
     }
 
 
-@app.post("/api/quotations/calculate")
-def calculate_quote(payload: QuoteRequest) -> dict:
+def calculate_quote_item(payload: QuoteRequest, persist: bool = True) -> dict:
     materials = search_materials(payload.material_query)["materials"]
     if not materials:
-        return {"material": None, "result": {"estimated_cost": None, "warning": "未找到匹配物料。"}}
+        return {"input": payload.model_dump(mode="json"), "material": None, "source_record": None, "result": {"estimated_cost": None, "warning": "未找到匹配物料。"}}
     material = materials[0]
     with db.connect() as conn:
         records = db.rows_to_dicts(conn.execute("select * from procurement_records where material_id = ?", (material["id"],)).fetchall())
     source = choose_price_source(records)
     result = estimate_cost(source, payload.required_quantity, payload.required_unit)
-    if source and result.get("estimated_cost") is not None:
+    if persist and source and result.get("estimated_cost") is not None:
         with db.connect() as conn:
             conn.execute(
                 """
@@ -440,7 +452,18 @@ def calculate_quote(payload: QuoteRequest) -> dict:
                     result.get("price_source_record_id"),
                 ),
             )
-    return {"material": material, "source_record": source, "result": result}
+    return {"input": payload.model_dump(mode="json"), "material": material, "source_record": source, "result": result}
+
+
+@app.post("/api/quotations/calculate")
+def calculate_quote(payload: QuoteRequest) -> dict:
+    item = calculate_quote_item(payload, persist=True)
+    return {"material": item["material"], "source_record": item["source_record"], "result": item["result"]}
+
+
+@app.post("/api/quotations/calculate-batch")
+def calculate_quote_batch(payload: QuoteBatchRequest) -> dict:
+    return {"items": [calculate_quote_item(item, persist=False) for item in payload.items]}
 
 
 @app.delete("/api/quotations/{quotation_id}")

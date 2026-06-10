@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import base64
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,6 +14,10 @@ from urllib.parse import urlparse
 from app.config import get_settings
 
 DB_PATH = Path(os.getenv("QUOTATION_DB_PATH", "quotation_history.db"))
+DEFAULT_USERS = (
+    {"name": "Admin", "email": "admin@example.com", "password": "Admin@123456", "role": "admin"},
+    {"name": "User", "email": "user@example.com", "password": "User@123456", "role": "user"},
+)
 
 
 def database_url() -> str:
@@ -261,6 +267,7 @@ def init_db() -> None:
             create index if not exists idx_quotations_sha256 on quotations(file_sha256);
             """
             )
+            _ensure_default_users(conn)
             return
 
         conn.executescript(
@@ -399,13 +406,27 @@ def init_db() -> None:
                 foreign key(quotation_id) references quotations(id)
             );
 
-            create index if not exists idx_line_items_catalog_no on line_items(catalog_no);
-            create index if not exists idx_line_items_quotation_id on line_items(quotation_id);
-            create index if not exists idx_import_files_sha256 on import_files(file_sha256);
-            create index if not exists idx_quotations_sha256 on quotations(file_sha256);
             """
         )
         _ensure_sqlite_columns(conn)
+        _ensure_default_users(conn)
+
+
+def _hash_default_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120_000)
+    return f"pbkdf2_sha256${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def _ensure_default_users(conn: Any) -> None:
+    for user in DEFAULT_USERS:
+        existing = conn.execute("select id from users where lower(email) = lower(?)", (user["email"],)).fetchone()
+        if existing:
+            continue
+        conn.execute(
+            "insert into users (name, email, password_hash, role) values (?, ?, ?, ?)",
+            (user["name"], user["email"], _hash_default_password(user["password"]), user["role"]),
+        )
 
 
 def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
@@ -456,6 +477,11 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
             created_by integer,
             created_at text not null default current_timestamp
         );
+
+        create index if not exists idx_line_items_catalog_no on line_items(catalog_no);
+        create index if not exists idx_line_items_quotation_id on line_items(quotation_id);
+        create index if not exists idx_import_files_sha256 on import_files(file_sha256);
+        create index if not exists idx_quotations_sha256 on quotations(file_sha256);
         """
     )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.services.units import calculate_unit_price, parse_decimal, parse_quantity
+from app.services.units import calculate_unit_price, parse_decimal, parse_quantity, quantize_money
 
 
 def choose_price_source(records: list[dict]) -> dict | None:
@@ -46,8 +46,8 @@ def estimate_cost(source_record: dict | None, required_quantity: object, require
 
     cost: Decimal = source_unit_price * required.normalized_quantity
     return {
-        "estimated_cost": str(cost.quantize(Decimal("0.0001"))),
+        "estimated_cost": str(quantize_money(cost)),
         "price_source_record_id": source_record.get("id"),
-        "latest_unit_price": str(source_unit_price),
+        "latest_unit_price": str(quantize_money(source_unit_price)),
         "warning": None,
     }

@@ -7,7 +7,7 @@ from typing import Any
 
 from app.services.chemical_resolver import resolve_chemical
 from app.services.field_mapping import detect_field_mapping, missing_required_fields
-from app.services.units import calculate_unit_price, parse_decimal, parse_quantity
+from app.services.units import calculate_unit_price, parse_decimal, parse_quantity, quantize_money
 
 
 def _read_csv(content: bytes) -> list[dict[str, Any]]:
@@ -57,7 +57,7 @@ async def build_preview(filename: str, content: bytes, explicit_mapping: dict[st
         raw_name = str(normalized.get("material_name") or "").strip()
         candidate = await resolve_chemical(raw_name)
         quantity = parse_quantity(normalized.get("quantity"), normalized.get("unit"))
-        price = parse_decimal(normalized.get("price"))
+        price = quantize_money(parse_decimal(normalized.get("price")))
         unit_price = calculate_unit_price(price, quantity)
         preview_rows.append(
             {

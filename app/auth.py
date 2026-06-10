@@ -87,11 +87,14 @@ def user_for_token(token: str) -> dict | None:
 def current_user(authorization: str | None = Header(default=None), x_user_role: str | None = Header(default=None)) -> dict | None:
     if authorization and authorization.lower().startswith("bearer "):
         return user_for_token(authorization.split(" ", 1)[1].strip())
-    if x_user_role:
-        return {"id": None, "name": "legacy-header", "email": None, "role": x_user_role}
     return None
 
 
+def require_authenticated(user: dict | None) -> None:
+    if not user or not user.get("id"):
+        raise HTTPException(status_code=401, detail="Login required.")
+
+
 def require_role(user: dict | None, role: str = "admin") -> None:
-    if not user or user.get("role") != role:
+    if not user or not user.get("id") or user.get("role") != role:
         raise HTTPException(status_code=403, detail=f"{role.title()} role required.")

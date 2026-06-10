@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 
 MASS_FACTORS_TO_G = {
@@ -45,6 +45,8 @@ UNIT_ALIASES = {
     **{unit.lower(): unit for unit in COUNT_UNITS},
 }
 
+MONEY_PLACES = Decimal("0.01")
+
 
 @dataclass(frozen=True)
 class ParsedQuantity:
@@ -63,6 +65,12 @@ def parse_decimal(value: object) -> Decimal | None:
         return Decimal(str(value).strip().replace(",", ""))
     except (InvalidOperation, ValueError):
         return None
+
+
+def quantize_money(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return value.quantize(MONEY_PLACES, rounding=ROUND_HALF_UP)
 
 
 def normalize_unit(unit: object) -> str | None:
@@ -105,4 +113,4 @@ def calculate_unit_price(price: Decimal | None, quantity: ParsedQuantity) -> Dec
         return None
     if quantity.normalized_quantity == 0:
         return None
-    return price / quantity.normalized_quantity
+    return quantize_money(price / quantity.normalized_quantity)

@@ -1,6 +1,9 @@
+import asyncio
 from decimal import Decimal
+from pathlib import Path
 
 from app.services.field_mapping import detect_field_mapping
+from app.services.importer import build_preview
 from app.services.quote_engine import choose_price_source, estimate_cost
 from app.services.units import parse_quantity
 
@@ -33,4 +36,17 @@ def test_quote_prefers_latest_purchase_over_inquiry():
     result = estimate_cost(source, "500g", None)
 
     assert source["id"] == 2
-    assert result["estimated_cost"] == "300.0000"
+    assert result["estimated_cost"] == "300.00"
+
+
+def test_acceptance_procurement_csv_builds_preview():
+    sample_path = Path("data/samples/acceptance_procurement.csv")
+    preview = asyncio.run(build_preview(sample_path.name, sample_path.read_bytes()))
+
+    assert preview["total_rows"] == 5
+    assert preview["missing_required_fields"] == []
+    assert preview["mapping"]["化合物名称"] == "material_name"
+    assert preview["mapping"]["价格"] == "price"
+    assert preview["mapping"]["采购数量"] == "quantity"
+    assert preview["preview_rows"][0]["normalized"]["unit_price"] == "0.24"
+    assert preview["preview_rows"][0]["material_candidate"]["cas_number"] == "64-17-5"
