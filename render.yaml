@@ -8,7 +8,9 @@ services:
       - key: APP_ENV
         value: production
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: quotationhist-db
+          property: connectionString
       - key: JWT_SECRET
         sync: false
       - key: STORAGE_BACKEND
@@ -34,3 +36,8 @@ services:
         value: production
       - key: BACKEND_URL
         value: https://quotationhist-backend.onrender.com
+
+databases:
+  - name: quotationhist-db
+    databaseName: quotationhist
+    user: quotationhist
