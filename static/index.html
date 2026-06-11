@@ -32,6 +32,7 @@
         <button data-tab="quotations">报价历史</button>
         <button data-tab="dashboard">看板</button>
         <button data-tab="manual">录入</button>
+        <button data-tab="structures">结构注册</button>
         <button data-tab="search">查询</button>
         <button data-tab="quote">报价</button>
       </nav>
@@ -96,6 +97,31 @@
           <label class="span">备注<textarea name="remark"></textarea></label>
           <button type="submit">保存</button>
         </form>
+      </section>
+
+      <section id="structures" class="panel">
+        <div class="surface structure-editor-shell">
+          <div class="section-heading">
+            <h2>结构绘图器</h2>
+            <a class="button ghost" href="/isislike/?v=chemical-structure-registration" target="_blank" rel="noreferrer">新窗口打开</a>
+          </div>
+          <iframe class="structure-editor-frame" src="/isislike/?embedded=1&v=chemical-structure-registration" title="Chemical Structure Registration"></iframe>
+        </div>
+        <div class="grid two">
+          <form id="structureForm" class="surface form-grid structure-form">
+            <h2>注册化学结构</h2>
+            <label>名称<input name="name" required placeholder="Ethanol / 乙醇" /></label>
+            <label>CAS<input name="cas_number" placeholder="64-17-5" /></label>
+            <label class="span">SMILES<input name="smiles" placeholder="CCO" /></label>
+            <label class="span">Molfile<textarea name="molfile" placeholder="可从结构绘图器导出的 Molfile 粘贴到这里"></textarea></label>
+            <label class="span">备注<textarea name="notes"></textarea></label>
+            <button type="submit">注册结构</button>
+          </form>
+          <div class="surface">
+            <h2>结构预览</h2>
+            <div id="structurePreview" class="structure-preview muted-preview">保存后显示结构图</div>
+          </div>
+        </div>
       </section>
 
       <section id="search" class="panel">

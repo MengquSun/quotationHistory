@@ -298,6 +298,62 @@ document.querySelector("#manualForm").addEventListener("submit", async (event) =
   if (response.ok) event.currentTarget.reset();
 });
 
+function renderStructureRow(structure) {
+  const displayName = structure.material_name || structure.name || "未命名结构";
+  const meta = structure.cas_number || structure.molecular_formula || "—";
+  const alias =
+    structure.material_name && structure.name && structure.material_name !== structure.name
+      ? `<span class="structure-alias" title="${escapeHtml(structure.name)}">${escapeHtml(structure.name)}</span>`
+      : "";
+  const preview = structure.structure_svg
+    ? `<div class="structure-svg structure-svg-sm">${structure.structure_svg}</div>`
+    : `<span class="muted-preview">—</span>`;
+  return `<tr>
+    <td class="structure-col-graph">${preview}</td>
+    <td class="structure-col-name"><span class="structure-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>${alias}</td>
+    <td class="structure-col-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)}</td>
+    <td class="structure-col-smiles"><code title="${escapeHtml(structure.canonical_smiles || "")}">${escapeHtml(structure.canonical_smiles || "—")}</code></td>
+    <td class="structure-col-notes" title="${escapeHtml(structure.notes || "")}">${structure.notes ? escapeHtml(structure.notes) : "—"}</td>
+  </tr>`;
+}
+
+function renderStructureTable(structures, { compact = false } = {}) {
+  if (!structures.length) return "";
+  const compactClass = compact ? " structure-table-wrap compact" : " structure-table-wrap";
+  return `<div class="table-wrap${compactClass}"><table class="structure-table"><thead><tr><th>结构</th><th>名称</th><th>CAS / 分子式</th><th>SMILES</th><th>备注</th></tr></thead><tbody>${structures.map(renderStructureRow).join("")}</tbody></table></div>`;
+}
+
+function renderStructure(structure) {
+  return renderStructureTable([structure], { compact: true });
+}
+
+document.querySelector("#structureForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = asJson(event.currentTarget);
+  payload.name = payload.name?.trim();
+  payload.smiles = payload.smiles?.trim() || null;
+  payload.molfile = payload.molfile?.trim() || null;
+  payload.cas_number = payload.cas_number?.trim() || null;
+  payload.notes = payload.notes?.trim() || null;
+  if (!payload.smiles && !payload.molfile) {
+    toast("请填写 SMILES 或 Molfile。");
+    return;
+  }
+  const response = await fetch("/api/structures", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    toast(await readError(response));
+    return;
+  }
+  const data = await response.json();
+  document.querySelector("#structurePreview").innerHTML = renderStructure(data.structure);
+  event.currentTarget.reset();
+  toast("结构已注册");
+});
+
 async function runSearch() {
   const query = encodeURIComponent(document.querySelector("#searchInput").value);
   const response = await fetch(`/api/materials/search?q=${query}`);
@@ -324,9 +380,10 @@ document.querySelector("#searchInput").addEventListener("keydown", (event) => {
 async function loadMaterialRecords(id) {
   const response = await fetch(`/api/materials/${id}/records`);
   const data = await response.json();
+  const structures = renderStructureTable(data.structures || [], { compact: true });
   document.querySelector("#recordDetails").innerHTML = `<h2>${data.material.standard_name}</h2><p class="ok">最新采购单价：${
     data.stats.latest_purchase_unit_price || "-"
-  }，最新询价单价：${data.stats.latest_inquiry_unit_price || "-"}</p><table><thead><tr><th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>标准单价</th><th>供应商</th><th>人员</th><th>备注</th></tr></thead><tbody>${data.records
+  }，最新询价单价：${data.stats.latest_inquiry_unit_price || "-"}</p>${structures}<table><thead><tr><th>日期</th><th>类型</th><th>价格</th><th>数量</th><th>标准单价</th><th>供应商</th><th>人员</th><th>备注</th></tr></thead><tbody>${data.records
     .map(
       (row) =>
         `<tr><td>${row.record_date || ""}</td><td>${row.record_type}</td><td>${row.price || ""} ${row.currency || ""}</td><td>${row.quantity_value || ""} ${row.quantity_unit || ""}</td><td>${

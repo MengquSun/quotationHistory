@@ -206,3 +206,105 @@ def test_admin_import_confirm_records_current_user_and_batch_quote(tmp_path, mon
     assert data["record_count"] == 1
     assert data["most_recorded_materials"][0]["standard_name"] == "Ethanol"
     assert data["supplier_summary"][0]["supplier"] == "Acme"
+
+
+def test_register_structure_and_link_to_material(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "structures.db")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'structures.db'}")
+    db.init_db()
+    client = TestClient(app)
+    login = client.post("/api/auth/login", json={"email": "user@example.com", "password": "User@123456"})
+    token = login.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    denied = client.post("/api/structures", json={"name": "Ethanol", "smiles": "CCO"})
+    assert denied.status_code == 401
+
+    created = client.post(
+        "/api/structures",
+        json={"name": "Ethanol", "cas_number": "64-17-5", "smiles": "CCO", "notes": "registered from editor"},
+        headers=headers,
+    )
+    assert created.status_code == 200
+    structure = created.json()["structure"]
+    assert structure["name"] == "Ethanol"
+    assert structure["canonical_smiles"]
+    assert structure["structure_svg"]
+
+    duplicate = client.post("/api/structures", json={"name": "Ethanol duplicate", "smiles": "CCO"}, headers=headers)
+    assert duplicate.status_code == 409
+
+    listing = client.get("/api/structures?q=ethanol")
+    assert listing.status_code == 200
+    assert listing.json()["structures"][0]["name"] == "Ethanol"
+
+    detail = client.get(f"/api/materials/{structure['material_id']}/records")
+    assert detail.status_code == 200
+    assert detail.json()["structures"][0]["id"] == structure["id"]
+
+
+def test_isislike_molecule_compatibility_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "molecules.db")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'molecules.db'}")
+    db.init_db()
+    client = TestClient(app)
+
+    saved = client.post("/api/molecules/save", json={"smiles": "CCO", "molfile": None})
+    assert saved.status_code == 200
+    molecule = saved.json()
+    assert molecule["id"]
+    assert molecule["canonical_smiles"]
+
+    duplicate = client.post("/api/molecules/save", json={"smiles": "CCO", "molfile": None})
+    assert duplicate.status_code == 200
+    assert duplicate.json()["id"] == molecule["id"]
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["name", "smiles", "notes"])
+    sheet.append(["Acetone", "CC(=O)C", "from isislike import"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    imported = client.post(
+        "/api/molecules/import",
+        files={"file": ("molecules.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert imported.status_code == 200
+    assert imported.json()["success_count"] == 1
+    assert imported.json()["failed_count"] == 0
+
+    listing = client.get("/api/molecules")
+    assert listing.status_code == 200
+    assert len(listing.json()) == 2
+
+    exact = client.post("/api/molecules/search/exact", json={"smiles": "CCO"})
+    assert exact.status_code == 200
+    assert exact.json()["id"] == molecule["id"]
+
+    svg = client.get(f"/api/molecules/{molecule['id']}/structure.svg")
+    assert svg.status_code == 200
+    assert "svg" in svg.text
+    acetone = client.post("/api/molecules/search/exact", json={"smiles": "CC(=O)C"}).json()
+    acetone_svg = client.get(f"/api/molecules/{acetone['id']}/structure.svg")
+    assert acetone_svg.status_code == 200
+    assert acetone_svg.text != svg.text
+
+    detail = client.get(f"/api/molecules/{molecule['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["has_structure_svg"] is True
+
+    updated = client.patch(
+        f"/api/molecules/{molecule['id']}",
+        json={"name": "Ethanol updated", "notes": "lab batch"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Ethanol updated"
+    assert updated.json()["notes"] == "lab batch"
+
+    deleted = client.delete(f"/api/molecules/{molecule['id']}")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/molecules/{molecule['id']}").status_code == 404
+
+    config = client.get("/api/export/config")
+    assert config.status_code == 200
+    assert config.json()["enabled"] is False

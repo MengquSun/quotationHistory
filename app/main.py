@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,16 @@ from app.services.quotation_repository import (
     quotation_dashboard,
 )
 from app.services.quote_engine import choose_price_source, estimate_cost
+from app.services.structure_registry import (
+    StructureError,
+    archive_structure,
+    derive_structure_properties,
+    get_structure,
+    list_structures,
+    register_structure,
+    render_smiles_svg,
+    update_structure,
+)
 from app.storage import get_storage
 from app.services.units import calculate_unit_price, parse_decimal, parse_quantity, quantize_money
 
@@ -46,6 +56,9 @@ app.add_middleware(
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+ISISLIKE_DIST_DIR = STATIC_DIR / "isislike"
+if ISISLIKE_DIST_DIR.exists():
+    app.mount("/isislike", StaticFiles(directory=ISISLIKE_DIST_DIR, html=True), name="isislike")
 
 
 class ManualRecord(BaseModel):
@@ -97,6 +110,46 @@ class FxRatePayload(BaseModel):
     quote_currency: str
     rate: Decimal
     effective_on: str
+
+
+class StructureRegisterRequest(BaseModel):
+    name: str = Field(min_length=1)
+    smiles: str | None = None
+    molfile: str | None = None
+    cas_number: str | None = None
+    notes: str | None = None
+    material_id: int | None = None
+
+
+class MoleculeSaveRequest(BaseModel):
+    smiles: str
+    molfile: str | None = None
+    name: str | None = None
+    notes: str | None = None
+
+
+class MoleculeUpdateRequest(BaseModel):
+    name: str | None = None
+    notes: str | None = None
+
+
+class SmilesInput(BaseModel):
+    smiles: str
+
+
+class SmartsInput(BaseModel):
+    smarts: str
+
+
+class SimilaritySearchRequest(BaseModel):
+    smiles: str
+    match_threshold: float = 0.7
+    match_count: int = 50
+
+
+def _clean_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def get_request_user(authorization: str | None, x_user_role: str | None) -> dict | None:
@@ -409,9 +462,246 @@ def material_records(material_id: int) -> dict:
         rows = db.rows_to_dicts(
             conn.execute("select * from procurement_records where material_id = ? and archived_at is null order by coalesce(record_date, cast(created_at as text)) desc", (material_id,)).fetchall()
         )
+        structures = db.rows_to_dicts(
+            conn.execute("select * from molecule_structures where material_id = ? and archived_at is null order by updated_at desc, id desc", (material_id,)).fetchall()
+        )
     if not material:
         raise HTTPException(status_code=404, detail="Material not found.")
-    return {"material": material, "records": rows, "stats": summarize_records(rows)}
+    return {"material": material, "records": rows, "structures": structures, "stats": summarize_records(rows)}
+
+
+@app.get("/api/structures")
+def structure_list(q: str = "", limit: int = 100) -> dict:
+    return {"structures": list_structures(q=q, limit=limit)}
+
+
+@app.post("/api/structures")
+def structure_register(payload: StructureRegisterRequest, authorization: str | None = Header(default=None), x_user_role: str | None = Header(default=None)) -> dict:
+    user = require_login(authorization, x_user_role)
+    created_by = str(user.get("email") or user.get("name") or user.get("id"))
+    try:
+        structure = register_structure(
+            name=payload.name,
+            smiles=payload.smiles,
+            molfile=payload.molfile,
+            cas_number=payload.cas_number,
+            notes=payload.notes,
+            material_id=payload.material_id,
+            created_by=created_by,
+        )
+    except StructureError as exc:
+        status_code = 409 if "已注册" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {"structure": structure}
+
+
+def structure_to_molecule(structure: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(structure["id"]),
+        "canonical_smiles": structure.get("canonical_smiles") or "",
+        "molecular_weight": structure.get("molecular_weight"),
+        "molecular_formula": structure.get("molecular_formula"),
+        "name": structure.get("name"),
+        "notes": structure.get("notes"),
+        "created_at": structure.get("created_at"),
+        "updated_at": structure.get("updated_at"),
+    }
+
+
+def find_structure_by_canonical_smiles(smiles: str) -> dict[str, Any] | None:
+    props = derive_structure_properties(smiles=smiles)
+    canonical = props.canonical_smiles or smiles.strip()
+    with db.connect() as conn:
+        row = conn.execute(
+            "select * from molecule_structures where canonical_smiles = ? and archived_at is null",
+            (canonical,),
+        ).fetchone()
+    return db.row_to_dict(row)
+
+
+def save_molecule_structure(
+    *,
+    smiles: str | None,
+    molfile: str | None = None,
+    name: str | None = None,
+    notes: str | None = None,
+    created_by: str = "isislike-editor",
+) -> dict[str, Any]:
+    try:
+        return register_structure(
+            name=name or smiles or "Imported molecule",
+            smiles=smiles,
+            molfile=molfile,
+            notes=notes,
+            created_by=created_by,
+        )
+    except StructureError as exc:
+        if smiles and "已注册" in str(exc):
+            existing = find_structure_by_canonical_smiles(smiles)
+            if existing:
+                return existing
+        raise
+
+
+def split_sdf_records(text: str) -> list[str]:
+    return [record.strip() for record in text.split("$$$$") if record.strip()]
+
+
+def parse_molecule_import(filename: str, content: bytes) -> list[dict[str, str | None]]:
+    lower = filename.lower()
+    if lower.endswith(".mol"):
+        text = content.decode("utf-8-sig", errors="replace").strip()
+        return [{"name": _clean_text(text.splitlines()[0] if text else None), "smiles": None, "molfile": text, "notes": None}]
+    if lower.endswith(".sdf"):
+        text = content.decode("utf-8-sig", errors="replace")
+        rows = []
+        for record in split_sdf_records(text):
+            rows.append({"name": _clean_text(record.splitlines()[0] if record else None), "smiles": None, "molfile": record, "notes": None})
+        return rows
+    if lower.endswith((".xlsx", ".xlsm")):
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        sheet = workbook.active
+        iterator = sheet.iter_rows(values_only=True)
+        headers = [str(value or "").strip().lower() for value in next(iterator, [])]
+        aliases = {
+            "name": {"name", "molecule", "compound", "compound name", "chemical name", "名称", "化合物", "化合物名称"},
+            "smiles": {"smiles", "canonical_smiles", "canonical smiles", "结构式", "smile"},
+            "molfile": {"molfile", "mol", "mol block", "molblock"},
+            "notes": {"notes", "note", "remark", "remarks", "备注"},
+        }
+        indexes = {
+            field: next((i for i, header in enumerate(headers) if header in names), None)
+            for field, names in aliases.items()
+        }
+        if indexes["smiles"] is None and indexes["molfile"] is None:
+            indexes["smiles"] = 0
+        rows = []
+        for values in iterator:
+            smiles = _clean_text(values[indexes["smiles"]]) if indexes["smiles"] is not None and indexes["smiles"] < len(values) else None
+            molfile = _clean_text(values[indexes["molfile"]]) if indexes["molfile"] is not None and indexes["molfile"] < len(values) else None
+            if not smiles and not molfile:
+                continue
+            name = _clean_text(values[indexes["name"]]) if indexes["name"] is not None and indexes["name"] < len(values) else None
+            notes = _clean_text(values[indexes["notes"]]) if indexes["notes"] is not None and indexes["notes"] < len(values) else None
+            rows.append({"name": name, "smiles": smiles, "molfile": molfile, "notes": notes})
+        return rows
+    raise StructureError("仅支持导入 .mol、.sdf、.xlsx 或 .xlsm 文件。")
+
+
+@app.get("/api/export/config")
+def export_config() -> dict:
+    return {"enabled": False, "require_key": False}
+
+
+@app.get("/api/molecules")
+def molecule_list(limit: int = 500) -> list[dict[str, Any]]:
+    return [structure_to_molecule(row) for row in list_structures(limit=limit)]
+
+
+@app.post("/api/molecules/save")
+def molecule_save(payload: MoleculeSaveRequest) -> dict:
+    try:
+        structure = save_molecule_structure(
+            smiles=payload.smiles,
+            molfile=payload.molfile,
+            name=payload.name,
+            notes=payload.notes,
+        )
+    except StructureError as exc:
+        status_code = 409 if "已注册" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return structure_to_molecule(structure)
+
+
+@app.post("/api/molecules/import")
+async def molecule_import(file: UploadFile = File(...)) -> dict:
+    content = await file.read()
+    try:
+        candidates = parse_molecule_import(file.filename or "molecules", content)
+    except Exception as exc:
+        detail = str(exc) or "文件无法解析。"
+        raise HTTPException(status_code=400, detail=detail) from exc
+
+    success_count = 0
+    errors: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        try:
+            save_molecule_structure(
+                name=candidate.get("name") or candidate.get("smiles") or f"Imported molecule {index}",
+                smiles=candidate.get("smiles"),
+                molfile=candidate.get("molfile"),
+                notes=candidate.get("notes"),
+                created_by="isislike-import",
+            )
+            success_count += 1
+        except StructureError as exc:
+            errors.append({"index": index, "reason": str(exc)})
+
+    return {
+        "success_count": success_count,
+        "failed_count": len(errors),
+        "errors": errors,
+    }
+
+
+@app.post("/api/molecules/search/exact")
+def molecule_exact_search(payload: SmilesInput) -> dict | None:
+    try:
+        row = find_structure_by_canonical_smiles(payload.smiles)
+    except StructureError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return structure_to_molecule(row) if row else None
+
+
+@app.post("/api/molecules/search/substructure")
+def molecule_substructure_search(payload: SmartsInput) -> list[dict[str, Any]]:
+    return []
+
+
+@app.post("/api/molecules/search/similarity")
+def molecule_similarity_search(payload: SimilaritySearchRequest) -> list[dict[str, Any]]:
+    return []
+
+
+@app.get("/api/molecules/{molecule_id}")
+def molecule_detail(molecule_id: int) -> dict:
+    structure = get_structure(molecule_id)
+    if not structure:
+        raise HTTPException(status_code=404, detail="Molecule not found.")
+    return {**structure_to_molecule(structure), "has_structure_svg": bool(structure.get("structure_svg"))}
+
+
+@app.get("/api/molecules/{molecule_id}/structure.svg")
+def molecule_structure_svg(molecule_id: int) -> Response:
+    structure = get_structure(molecule_id)
+    if not structure:
+        raise HTTPException(status_code=404, detail="Structure image not found.")
+    smiles = structure.get("canonical_smiles")
+    if not smiles:
+        raise HTTPException(status_code=404, detail="Structure SMILES not found.")
+    try:
+        svg = derive_structure_properties(smiles=smiles).structure_svg or render_smiles_svg(smiles)
+    except StructureError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.patch("/api/molecules/{molecule_id}")
+def molecule_update(molecule_id: int, payload: MoleculeUpdateRequest) -> dict:
+    try:
+        structure = update_structure(molecule_id, name=payload.name, notes=payload.notes)
+    except StructureError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return structure_to_molecule(structure)
+
+
+@app.delete("/api/molecules/{molecule_id}")
+def molecule_delete(molecule_id: int) -> Response:
+    if not archive_structure(molecule_id):
+        raise HTTPException(status_code=404, detail="Molecule not found.")
+    return Response(status_code=204)
 
 
 def summarize_records(records: list[dict]) -> dict:

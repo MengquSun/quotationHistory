@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+node_modules/
+isislike_frontend/node_modules/
 .env
 .data/
 quotation_history.db

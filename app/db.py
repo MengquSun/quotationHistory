@@ -158,6 +158,24 @@ def init_db() -> None:
                 updated_at timestamptz not null default current_timestamp
             );
 
+            create table if not exists molecule_structures (
+                id serial primary key,
+                material_id integer references materials(id),
+                name text not null,
+                cas_number text,
+                canonical_smiles text,
+                molfile text,
+                molecular_formula text,
+                molecular_weight numeric,
+                inchikey text,
+                structure_svg text,
+                notes text,
+                created_by text,
+                archived_at text,
+                created_at timestamptz not null default current_timestamp,
+                updated_at timestamptz not null default current_timestamp
+            );
+
             create table if not exists import_files (
                 id serial primary key,
                 filename text not null,
@@ -265,6 +283,7 @@ def init_db() -> None:
             create index if not exists idx_line_items_quotation_id on line_items(quotation_id);
             create index if not exists idx_import_files_sha256 on import_files(file_sha256);
             create index if not exists idx_quotations_sha256 on quotations(file_sha256);
+            create unique index if not exists idx_molecule_structures_smiles on molecule_structures(canonical_smiles) where archived_at is null and canonical_smiles is not null;
             """
             )
             _ensure_default_users(conn)
@@ -317,6 +336,25 @@ def init_db() -> None:
                 match_status text not null default 'unresolved',
                 created_at text not null default current_timestamp,
                 updated_at text not null default current_timestamp
+            );
+
+            create table if not exists molecule_structures (
+                id integer primary key autoincrement,
+                material_id integer,
+                name text not null,
+                cas_number text,
+                canonical_smiles text,
+                molfile text,
+                molecular_formula text,
+                molecular_weight numeric,
+                inchikey text,
+                structure_svg text,
+                notes text,
+                created_by text,
+                archived_at text,
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                foreign key(material_id) references materials(id)
             );
 
             create table if not exists import_files (
@@ -482,6 +520,7 @@ def _ensure_sqlite_columns(conn: sqlite3.Connection) -> None:
         create index if not exists idx_line_items_quotation_id on line_items(quotation_id);
         create index if not exists idx_import_files_sha256 on import_files(file_sha256);
         create index if not exists idx_quotations_sha256 on quotations(file_sha256);
+        create unique index if not exists idx_molecule_structures_smiles on molecule_structures(canonical_smiles) where archived_at is null and canonical_smiles is not null;
         """
     )
 
@@ -519,8 +558,8 @@ def find_or_create_material(candidate: dict, raw_name: str) -> int:
 
         cur = conn.execute(
             """
-            insert into materials (cas_number, standard_name, english_name, chinese_name, synonyms, match_status)
-            values (?, ?, ?, ?, ?, ?)
+            insert into materials (cas_number, standard_name, english_name, chinese_name, synonyms, smiles, inchikey, match_status)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cas,
@@ -528,6 +567,8 @@ def find_or_create_material(candidate: dict, raw_name: str) -> int:
                 candidate.get("english_name"),
                 candidate.get("chinese_name"),
                 json.dumps(sorted(set([*synonyms, raw_name])), ensure_ascii=False),
+                candidate.get("smiles"),
+                candidate.get("inchikey"),
                 match_status,
             ),
         )
