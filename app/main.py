@@ -209,19 +209,7 @@ def index() -> str:
 
 @app.get("/api/health")
 def health() -> dict:
-    database = {"backend": "postgresql" if db.is_postgres() else "sqlite", "status": "ok"}
-    try:
-        with db.connect() as conn:
-            conn.execute("select 1 as ok").fetchone()
-    except Exception as exc:
-        database["status"] = "error"
-        database["error"] = exc.__class__.__name__
-    return {
-        "status": "ok" if database["status"] == "ok" else "degraded",
-        "environment": settings.environment,
-        "storage_backend": settings.storage_backend,
-        "database": database,
-    }
+    return {"status": "ok", "environment": settings.environment, "storage_backend": settings.storage_backend}
 
 
 @app.get("/health")

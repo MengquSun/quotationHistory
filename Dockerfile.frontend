@@ -5,6 +5,5 @@ ENV BACKEND_URL=http://backend:8000
 COPY deploy/frontend.nginx.conf /etc/nginx/templates/default.conf.template
 COPY static/index.html /usr/share/nginx/html/index.html
 COPY static /usr/share/nginx/html/static
-COPY static/isislike /usr/share/nginx/html/isislike
 
 EXPOSE 80
